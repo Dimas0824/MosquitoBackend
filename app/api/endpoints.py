@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, UploadFile, File, Form, BackgroundTasks,
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_device
-from app.config import settings, get_current_time
+from app.config import settings, get_current_time, to_wib
 from app.database import get_db
 from app.models.device import Device
 from app.models.image import Image
@@ -344,7 +344,7 @@ async def activate_servo(
             "command": "ACTIVATE_SERVO",
             "status": control.status,
             "message": control.message,
-            "timestamp": control.updated_at.isoformat()
+            "timestamp": to_wib(control.updated_at).isoformat()
         }
         
     except Exception as e:
@@ -393,7 +393,7 @@ async def stop_servo(
             "command": "STOP_SERVO",
             "status": control.status,
             "message": control.message,
-            "timestamp": control.updated_at.isoformat()
+            "timestamp": to_wib(control.updated_at).isoformat()
         }
         
     except Exception as e:
@@ -456,7 +456,7 @@ async def control_executed(
         "command": control.control_command,
         "status": "EXECUTED",
         "message": control.message,
-        "timestamp": control.updated_at.isoformat()
+        "timestamp": to_wib(control.updated_at).isoformat()
     }
 
 
@@ -507,7 +507,7 @@ async def control_failed(
         "command": control.control_command,
         "status": "FAILED",
         "message": control.message,
-        "timestamp": control.updated_at.isoformat()
+        "timestamp": to_wib(control.updated_at).isoformat()
     }
 
 
@@ -553,7 +553,7 @@ async def get_control_status(
         "command": control.control_command,
         "status": control.status,
         "message": control.message,
-        "created_at": control.created_at.isoformat(),
-        "updated_at": control.updated_at.isoformat()
+        "created_at": to_wib(control.created_at).isoformat(),
+        "updated_at": to_wib(control.updated_at).isoformat()
     }
 
