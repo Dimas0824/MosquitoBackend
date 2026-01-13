@@ -13,7 +13,7 @@ from typing import Optional, Dict, Any
 
 from app.models.manual_control import DeviceControl, generate_uuid
 from app.models.device import Device
-from app.config import get_current_time
+from app.config import get_current_time, to_wib
 
 
 class DeviceControlService:
@@ -151,7 +151,7 @@ class DeviceControlService:
                 "command": control.control_command,
                 "status": control.status,
                 "message": control.message,
-                "timestamp": control.updated_at.isoformat()
+                "timestamp": to_wib(control.updated_at).isoformat()
             }
         else:
             # Return automatic control
