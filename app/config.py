@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     DOCS_USERNAME: str = "admin"
     # Password hash (bcrypt) - default: "admin123"
     # Generate hash: from passlib.context import CryptContext; CryptContext(schemes=["bcrypt"]).hash("your_password")
-    DOCS_PASSWORD_HASH: str = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5VO/9rJ3jrGf2"
+    DOCS_PASSWORD_HASH: str = "$2b$12$p6Whuy4.XW8mhd96fC8PXu2KT3u8wZCcQ3zFx1dguR0yXR5Rhvv1."
     
     # Timezone (e.g., 'Asia/Jakarta' for WIB, 'UTC', 'America/New_York')
     TIMEZONE: str = "Asia/Jakarta"
