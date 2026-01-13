@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "dev-secret-key-change-in-production"
     
     # Timezone (e.g., 'Asia/Jakarta' for WIB, 'UTC', 'America/New_York')
-    TIMEZONE: str = "UTC"
+    TIMEZONE: str = "Asia/Jakarta"
     
     class Config:
         env_file = ".env"

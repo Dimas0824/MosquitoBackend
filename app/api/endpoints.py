@@ -1,25 +1,26 @@
 import os
 from datetime import datetime
-from fastapi import APIRouter, Depends, UploadFile, File, Form, BackgroundTasks, HTTPException
-from sqlalchemy.orm import Session
 from typing import Optional
 
-from app.database import get_db
+from fastapi import APIRouter, Depends, UploadFile, File, Form, BackgroundTasks, HTTPException
+from sqlalchemy.orm import Session
+
 from app.auth import get_current_device
+from app.config import settings, get_current_time
+from app.database import get_db
 from app.models.device import Device
 from app.models.image import Image
 from app.models.inference import InferenceResult
 from app.schemas.schemas import UploadResponse, DeviceResponse
-from app.services.roboflow_service import roboflow_service
 from app.services.blynk_service import blynk_service
 from app.services.decision_engine import decision_engine
 from app.services.manual_control_service import DeviceControlService
+from app.services.roboflow_service import roboflow_service
 from app.utils.image_utils import (
-    save_image, 
-    preprocess_image, 
+    save_image,
+    preprocess_image,
     generate_image_filename
 )
-from app.config import settings, get_current_time
 
 router = APIRouter()
 
@@ -64,8 +65,8 @@ async def process_inference_background(
         
         # Handle alerts
         if decision_engine.should_create_alert(
-            device_code, 
-            parsed_result['total_jentik'], 
+            device_code,
+            parsed_result['total_jentik'],
             db
         ):
             decision_engine.create_alert(
@@ -118,15 +119,29 @@ async def upload_image(
     db: Session = Depends(get_db)
 ):
     """
-    Upload image endpoint
+    Upload image endpoint - ESP32 POST multipart/form-data
     Flow sesuai rancangan.md:
-    1. Auth device
+    1. Auth device (HTTP Basic Auth)
     2. Save original image
     3. Preprocess image
     4. Response cepat ke ESP32
     5. Inference dijalankan di background
+    
+    Expected request:
+    - Method: POST
+    - Content-Type: multipart/form-data
+    - Authorization: Basic base64(device_code:password)
+    - Body: image file dengan field name "image"
     """
     try:
+        # Log request details for debugging
+        print(f"\n=== Upload Request ===")
+        print(f"Device: {current_device.device_code}")
+        print(f"Image filename: {image.filename}")
+        print(f"Content-Type: {image.content_type}")
+        print(f"Captured at: {captured_at}")
+        print(f"=====================\n")
+        
         # Parse captured_at
         captured_datetime = None
         if captured_at:
@@ -169,7 +184,7 @@ async def upload_image(
         
         # Preprocess image
         prep_width, prep_height, prep_checksum, prep_data = preprocess_image(
-            original_path, 
+            original_path,
             preprocessed_path
         )
         
@@ -200,6 +215,11 @@ async def upload_image(
         
         # Response cepat - default SLEEP
         # ESP32 akan sleep, nanti action berikutnya disesuaikan berdasarkan hasil inference
+        print(f"✓ Image uploaded successfully from {current_device.device_code}")
+        print(f"  Original: {original_filename}")
+        print(f"  Preprocessed: {preprocessed_filename}")
+        print(f"  Background inference queued\n")
+        
         return UploadResponse(
             success=True,
             message="Image uploaded successfully, processing in background",
@@ -211,6 +231,7 @@ async def upload_image(
         )
         
     except Exception as e:
+        print(f"✗ Upload failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 
@@ -246,13 +267,13 @@ async def get_device_control(
     Manual control (status=PENDING) overrides automatic.
     
     Response:
-    {
-        "mode": "MANUAL" | "AUTO",
-        "command": "ACTIVATE_SERVO" | "STOP_SERVO",
-        "status": "PENDING" | "EXECUTED" | "AUTO",
-        "message": "...",
-        "timestamp": "2026-01-06T..."
-    }
+        {
+            "mode": "MANUAL" | "AUTO",
+            "command": "ACTIVATE_SERVO" | "STOP_SERVO",
+            "status": "PENDING" | "EXECUTED" | "AUTO",
+            "message": "...",
+            "timestamp": "2026-01-06T..."
+        }
     """
     # Verify device matches auth
     if current_device.device_code != device_code:
@@ -263,7 +284,8 @@ async def get_device_control(
         InferenceResult.device_code == device_code
     ).order_by(InferenceResult.inference_at.desc()).first()
     
-    automatic_action = "STOP_SERVO"  # Default safe state
+    # Default safe state
+    automatic_action = "STOP_SERVO"
     if latest_inference and latest_inference.status == "success":
         status = decision_engine.determine_status(latest_inference.total_jentik)
         action = decision_engine.determine_action(status)
@@ -294,14 +316,14 @@ async def activate_servo(
     No control_command field needed - the endpoint itself is the command.
     
     Response:
-    {
-        "success": true,
-        "device_code": "test",
-        "command": "ACTIVATE_SERVO",
-        "status": "PENDING",
-        "message": "...",
-        "timestamp": "2026-01-06T..."
-    }
+        {
+            "success": true,
+            "device_code": "test",
+            "command": "ACTIVATE_SERVO",
+            "status": "PENDING",
+            "message": "...",
+            "timestamp": "2026-01-06T..."
+        }
     """
     # Verify device matches auth
     if current_device.device_code != device_code:
@@ -343,14 +365,14 @@ async def stop_servo(
     No control_command field needed - the endpoint itself is the command.
     
     Response:
-    {
-        "success": true,
-        "device_code": "test",
-        "command": "STOP_SERVO",
-        "status": "PENDING",
-        "message": "...",
-        "timestamp": "2026-01-06T..."
-    }
+        {
+            "success": true,
+            "device_code": "test",
+            "command": "STOP_SERVO",
+            "status": "PENDING",
+            "message": "...",
+            "timestamp": "2026-01-06T..."
+        }
     """
     # Verify device matches auth
     if current_device.device_code != device_code:
@@ -390,16 +412,17 @@ async def control_executed(
     
     IoT calls this endpoint after successfully executing command.
     No status field needed - the endpoint itself indicates EXECUTED.
+    After marking as executed, automatically sets STOP_SERVO command.
     
     Response:
-    {
-        "success": true,
-        "device_code": "test",
-        "command": "ACTIVATE_SERVO",
-        "status": "EXECUTED",
-        "message": "...",
-        "timestamp": "2026-01-06T..."
-    }
+        {
+            "success": true,
+            "device_code": "test",
+            "command": "ACTIVATE_SERVO",
+            "status": "EXECUTED",
+            "message": "...",
+            "timestamp": "2026-01-06T..."
+        }
     """
     # Verify device matches auth
     if current_device.device_code != device_code:
@@ -415,9 +438,17 @@ async def control_executed(
     
     if not control:
         raise HTTPException(
-            status_code=404, 
+            status_code=404,
             detail="No control found for this device"
         )
+    
+    # After marking as executed, automatically set STOP_SERVO command
+    DeviceControlService.set_control(
+        db=db,
+        device_code=device_code,
+        control_command="STOP_SERVO",
+        message="Auto stop servo after execution"
+    )
     
     return {
         "success": True,
@@ -443,14 +474,14 @@ async def control_failed(
     No status field needed - the endpoint itself indicates FAILED.
     
     Response:
-    {
-        "success": true,
-        "device_code": "test",
-        "command": "ACTIVATE_SERVO",
-        "status": "FAILED",
-        "message": "...",
-        "timestamp": "2026-01-06T..."
-    }
+        {
+            "success": true,
+            "device_code": "test",
+            "command": "ACTIVATE_SERVO",
+            "status": "FAILED",
+            "message": "...",
+            "timestamp": "2026-01-06T..."
+        }
     """
     # Verify device matches auth
     if current_device.device_code != device_code:
@@ -466,7 +497,7 @@ async def control_failed(
     
     if not control:
         raise HTTPException(
-            status_code=404, 
+            status_code=404,
             detail="No control found for this device"
         )
     
@@ -492,14 +523,14 @@ async def get_control_status(
     Returns current control configuration for device.
     
     Response:
-    {
-        "device_code": "test",
-        "command": "ACTIVATE_SERVO",
-        "status": "PENDING",
-        "message": "...",
-        "created_at": "2026-01-06T...",
-        "updated_at": "2026-01-06T..."
-    }
+        {
+            "device_code": "test",
+            "command": "ACTIVATE_SERVO",
+            "status": "PENDING",
+            "message": "...",
+            "created_at": "2026-01-06T...",
+            "updated_at": "2026-01-06T..."
+        }
     """
     # Verify device matches auth
     if current_device.device_code != device_code:
