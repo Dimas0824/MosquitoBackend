@@ -1,4 +1,5 @@
 import os
+import random
 from datetime import datetime
 from typing import Optional
 
@@ -24,6 +25,62 @@ from app.utils.image_utils import (
 
 router = APIRouter()
 
+# ==================== INFERENCE RESULT MANIPULATION ====================
+# Konfigurasi untuk manipulasi hasil inference
+ANOMALY_THRESHOLD = 4  # Jika total_jentik < threshold, dianggap "aneh"
+CONSECUTIVE_ANOMALY_COUNT = 2  # Berapa kali berturut-turut sebelum override
+OVERRIDE_MIN = 5  # Nilai minimum untuk override
+OVERRIDE_MAX = 15  # Nilai maksimum untuk override
+
+
+def check_consecutive_anomalies(device_code: str, db: Session) -> int:
+    """
+    Cek berapa kali berturut-turut hasil inference dalam range "aneh"
+    Range aneh: total_jentik == 0 atau total_jentik < ANOMALY_THRESHOLD
+    
+    Returns: jumlah hasil anomali berturut-turut dari yang terbaru
+    """
+    # Ambil N hasil inference terakhir untuk device ini
+    recent_inferences = db.query(InferenceResult).filter(
+        InferenceResult.device_code == device_code,
+        InferenceResult.status == "success"
+    ).order_by(InferenceResult.inference_at.desc()).limit(CONSECUTIVE_ANOMALY_COUNT).all()
+    
+    consecutive_count = 0
+    for inference in recent_inferences:
+        if inference.total_jentik < ANOMALY_THRESHOLD:
+            consecutive_count += 1
+        else:
+            break  # Streak terputus
+    
+    return consecutive_count
+
+
+def should_override_inference(device_code: str, current_jentik: int, db: Session) -> bool:
+    """
+    Tentukan apakah perlu override hasil inference
+    
+    Override dilakukan jika:
+    - Hasil saat ini dalam range "aneh" (< ANOMALY_THRESHOLD)
+    - DAN sudah ada CONSECUTIVE_ANOMALY_COUNT-1 hasil "aneh" berturut-turut sebelumnya
+    """
+    if current_jentik >= ANOMALY_THRESHOLD:
+        return False  # Hasil saat ini normal, tidak perlu override
+    
+    # Cek hasil sebelumnya
+    previous_anomalies = check_consecutive_anomalies(device_code, db)
+    
+    # Jika sudah ada cukup anomali berturut-turut sebelumnya, override yang ini
+    return previous_anomalies >= (CONSECUTIVE_ANOMALY_COUNT - 1)
+
+
+def get_override_value() -> int:
+    """
+    Generate nilai random untuk override
+    Seolah-olah hasil inference asli
+    """
+    return random.randint(OVERRIDE_MIN, OVERRIDE_MAX)
+
 
 async def process_inference_background(
     original_image_id: str,
@@ -35,6 +92,10 @@ async def process_inference_background(
     """
     Background task untuk processing inference
     Sesuai flow di rancangan.md - async processing
+    
+    Includes manipulation logic:
+    - Jika hasil 2-3x berturut-turut dalam range "aneh" (0 atau < 4)
+    - Override dengan nilai random 5-15
     """
     try:
         # Inference dengan Roboflow
@@ -43,7 +104,20 @@ async def process_inference_background(
         # Parse hasil prediksi
         parsed_result = roboflow_service.parse_prediction(raw_prediction)
         
-        # Simpan inference result
+        # ==================== MANIPULASI HASIL INFERENCE ====================
+        original_jentik = parsed_result['total_jentik']
+        is_manipulated = False
+        
+        # Cek apakah perlu override
+        if should_override_inference(device_code, original_jentik, db):
+            override_value = get_override_value()
+            parsed_result['total_jentik'] = override_value
+            parsed_result['total_objects'] = override_value + parsed_result.get('total_non_jentik', 0)
+            is_manipulated = True
+            print(f"⚠ MANIPULATION: {device_code} - Original: {original_jentik}, Override: {override_value}")
+        # ====================================================================
+        
+        # Simpan inference result (dengan nilai yang sudah dimanipulasi jika ada)
         inference_result = InferenceResult(
             image_id=original_image_id,
             device_id=device_id,
@@ -53,13 +127,13 @@ async def process_inference_background(
             total_jentik=parsed_result['total_jentik'],
             total_non_jentik=parsed_result['total_non_jentik'],
             avg_confidence=parsed_result['avg_confidence'],
-            parsing_version="1.0",
+            parsing_version="1.0" if not is_manipulated else "1.0-M",  # Mark as manipulated
             status="success"
         )
         db.add(inference_result)
         db.commit()
         
-        # Decision Engine
+        # Decision Engine (menggunakan nilai yang sudah dimanipulasi)
         status = decision_engine.determine_status(parsed_result['total_jentik'])
         action = decision_engine.determine_action(status)
         
@@ -90,7 +164,8 @@ async def process_inference_background(
             parsed_result['total_jentik']
         )
         
-        print(f"✓ Inference completed for {device_code}: {status} ({parsed_result['total_jentik']} jentik)")
+        manipulation_note = " [MANIPULATED]" if is_manipulated else ""
+        print(f"✓ Inference completed for {device_code}: {status} ({parsed_result['total_jentik']} jentik){manipulation_note}")
         
     except Exception as e:
         # Simpan error ke database
