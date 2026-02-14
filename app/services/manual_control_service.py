@@ -153,11 +153,25 @@ class DeviceControlService:
                 "message": control.message,
                 "timestamp": to_wib(control.updated_at).isoformat()
             }
+        # Keep STOP_SERVO sticky after successful execution as safety hold.
+        # This prevents immediate fallback to AUTO that may re-activate servo.
+        elif (
+            control
+            and control.control_command == "STOP_SERVO"
+            and control.status == "EXECUTED"
+        ):
+            return {
+                "mode": "MANUAL",
+                "command": "STOP_SERVO",
+                "status": control.status,
+                "message": control.message,
+                "timestamp": to_wib(control.updated_at).isoformat()
+            }
         else:
             # Return automatic control
             return {
                 "mode": "AUTO",
-                "action": automatic_action,
+                "command": automatic_action,
                 "status": "AUTO",
                 "message": "Automatic control based on inference",
                 "timestamp": get_current_time().isoformat()
