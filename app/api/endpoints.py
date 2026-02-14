@@ -487,7 +487,6 @@ async def control_executed(
     
     IoT calls this endpoint after successfully executing command.
     No status field needed - the endpoint itself indicates EXECUTED.
-    After marking as executed, automatically sets STOP_SERVO command.
     
     Response:
         {
@@ -516,14 +515,6 @@ async def control_executed(
             status_code=404,
             detail="No control found for this device"
         )
-    
-    # After marking as executed, automatically set STOP_SERVO command
-    DeviceControlService.set_control(
-        db=db,
-        device_code=device_code,
-        control_command="STOP_SERVO",
-        message="Auto stop servo after execution"
-    )
     
     return {
         "success": True,
